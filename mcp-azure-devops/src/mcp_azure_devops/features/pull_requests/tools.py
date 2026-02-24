@@ -2,9 +2,10 @@ import re
 from typing import Optional, List
 from azure.devops.v7_1.git.git_client import GitClient
 from azure.devops.v7_1.identity.identity_client import IdentityClient
+from azure.devops.v7_1.policy.policy_client import PolicyClient
 from azure.devops.v7_1.git.models import GitPullRequest, GitPullRequestSearchCriteria, GitPullRequestCommentThread, ResourceRef, IdentityRefWithVote, GitPullRequestCompletionOptions, Comment
 from mcp.server.fastmcp import FastMCP
-from mcp_azure_devops.features.pull_requests.common import get_git_client, get_identity_client, AzureDevOpsClientError
+from mcp_azure_devops.features.pull_requests.common import get_git_client, get_identity_client, get_policy_client, AzureDevOpsClientError
 
 
 def _format_pull_request(pull_request: GitPullRequest) -> str:
@@ -767,10 +768,257 @@ def _reject_pull_request_impl(
 
 
 
+def _get_pr_policy_evaluations_impl(
+    git_client: GitClient,
+    policy_client: PolicyClient,
+    project: str,
+    repository: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Implementation of PR policy evaluations retrieval.
+
+    Args:
+        git_client: Git client
+        policy_client: Policy client
+        project: Azure DevOps project name
+        repository: Azure DevOps repository name
+        pull_request_id: ID of the Pull Request
+
+    Returns:
+        Formatted string containing policy evaluation results
+    """
+    try:
+        pr = git_client.get_pull_request(
+            repository_id=repository,
+            pull_request_id=pull_request_id,
+            project=project,
+        )
+
+        if not pr:
+            return f"Pull request {pull_request_id} not found."
+
+        artifact_id = getattr(pr, "artifact_id", None)
+        if not artifact_id:
+            return (
+                f"Could not determine artifact ID for pull "
+                f"request {pull_request_id}."
+            )
+
+        evaluations = policy_client.get_policy_evaluations(
+            project=project,
+            artifact_id=artifact_id,
+        )
+
+        if not evaluations:
+            return (
+                f"No policy evaluations found for pull "
+                f"request {pull_request_id}."
+            )
+
+        lines = [
+            f"# Policy Evaluations for PR {pull_request_id}"
+        ]
+        for evaluation in evaluations:
+            policy_type_name = "Unknown Policy"
+            config = getattr(evaluation, "configuration", None)
+            if config:
+                ptype = getattr(config, "type", None)
+                if ptype:
+                    policy_type_name = getattr(
+                        ptype, "display_name", policy_type_name
+                    )
+
+            status = getattr(evaluation, "status", "unknown")
+            lines.append(f"\n## {policy_type_name}")
+            lines.append(f"Status: {status}")
+
+            context = getattr(evaluation, "context", None)
+            if context:
+                build_def = getattr(
+                    context, "buildDefinitionName", None
+                ) or getattr(
+                    context, "build_definition_name", None
+                )
+                build_id = getattr(
+                    context, "buildId", None
+                ) or getattr(context, "build_id", None)
+                if build_def:
+                    lines.append(
+                        f"Build Definition: {build_def}"
+                    )
+                if build_id:
+                    lines.append(f"Build ID: {build_id}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return (
+            f"Error retrieving policy evaluations for PR "
+            f"{pull_request_id}: {str(e)}"
+        )
+
+
+def _approve_with_suggestions_pull_request_impl(
+    git_client: GitClient,
+    identity_client: IdentityClient,
+    project_id_or_name: str,
+    repository_id: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Implementation of pull request approval with suggestions.
+
+    Args:
+        git_client: Git client
+        identity_client: Identity client
+        project_id_or_name: Project ID or name
+        repository_id: Repository ID or name
+        pull_request_id: ID of the PR
+
+    Returns:
+        Formatted string containing vote information
+    """
+    try:
+        result = _set_vote_core_impl(
+            git_client=git_client,
+            identity_client=identity_client,
+            project_id_or_name=project_id_or_name,
+            repository_id=repository_id,
+            pull_request_id=pull_request_id,
+            vote=5,  # 5 = Approve with suggestions
+        )
+
+        return (
+            f"Pull request {pull_request_id} approved with "
+            f"suggestions by {result.display_name}"
+        )
+    except Exception as e:
+        return (
+            f"Error approving pull request with suggestions: "
+            f"{str(e)}"
+        )
+
+
+def _wait_for_author_pull_request_impl(
+    git_client: GitClient,
+    identity_client: IdentityClient,
+    project_id_or_name: str,
+    repository_id: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Implementation of setting a pull request to wait for author.
+
+    Args:
+        git_client: Git client
+        identity_client: Identity client
+        project_id_or_name: Project ID or name
+        repository_id: Repository ID or name
+        pull_request_id: ID of the PR
+
+    Returns:
+        Formatted string containing vote information
+    """
+    try:
+        result = _set_vote_core_impl(
+            git_client=git_client,
+            identity_client=identity_client,
+            project_id_or_name=project_id_or_name,
+            repository_id=repository_id,
+            pull_request_id=pull_request_id,
+            vote=-5,  # -5 = Waiting for author
+        )
+
+        return (
+            f"Pull request {pull_request_id} set to waiting for "
+            f"author by {result.display_name}"
+        )
+    except Exception as e:
+        return f"Error setting wait for author vote: {str(e)}"
+
+
+def _reset_pull_request_vote_impl(
+    git_client: GitClient,
+    identity_client: IdentityClient,
+    project_id_or_name: str,
+    repository_id: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Implementation of resetting a pull request vote.
+
+    Args:
+        git_client: Git client
+        identity_client: Identity client
+        project_id_or_name: Project ID or name
+        repository_id: Repository ID or name
+        pull_request_id: ID of the PR
+
+    Returns:
+        Formatted string containing vote reset information
+    """
+    try:
+        result = _set_vote_core_impl(
+            git_client=git_client,
+            identity_client=identity_client,
+            project_id_or_name=project_id_or_name,
+            repository_id=repository_id,
+            pull_request_id=pull_request_id,
+            vote=0,  # 0 = No vote (reset)
+        )
+
+        return (
+            f"Pull request {pull_request_id} vote reset "
+            f"by {result.display_name}"
+        )
+    except Exception as e:
+        return f"Error resetting pull request vote: {str(e)}"
+
+
+def _restart_pr_merge_impl(
+    git_client: GitClient,
+    project_id_or_name: str,
+    repository_id: str,
+    pull_request_id: int,
+) -> str:
+    """
+    Implementation of restarting PR merge evaluation.
+
+    Args:
+        git_client: Git client
+        project_id_or_name: Project ID or name
+        repository_id: Repository ID or name
+        pull_request_id: ID of the PR
+
+    Returns:
+        Formatted string confirming merge restart
+    """
+    try:
+        pr_update = GitPullRequest()
+        pr_update.merge_status = "queued"
+
+        git_client.update_pull_request(
+            git_pull_request_to_update=pr_update,
+            repository_id=repository_id,
+            pull_request_id=pull_request_id,
+            project=project_id_or_name,
+        )
+
+        return (
+            f"Merge evaluation restarted for pull "
+            f"request {pull_request_id}."
+        )
+    except Exception as e:
+        return (
+            f"Error restarting merge for pull request "
+            f"{pull_request_id}: {str(e)}"
+        )
+
+
 def register_tools(mcp: FastMCP) -> None:
     """
     Register pull request tools with the MCP server.
-    
+
     Args:
         mcp: The FastMCP server instance
     """
@@ -1221,12 +1469,12 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> str:
         """
         Reactivate a Pull Request in Azure DevOps.
-        
+
         Args:
             project: Azure DevOps project name
             repository: Azure DevOps repository name
             pull_request_id: ID of the PR
-        
+
         Returns:
             Formatted string containing PR state change information
         """
@@ -1241,35 +1489,170 @@ def register_tools(mcp: FastMCP) -> None:
         except AzureDevOpsClientError as e:
             return f"Error: {str(e)}"
 
+    @mcp.tool()
+    def get_pr_policy_evaluations(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        Retrieves policy evaluation results for a Pull Request.
 
-#
-# Below I was trying to figure out the policy evaluations like the build, expiratinon checks, etc.
-#
-# # Note that this thing simply does not work, because the evaluation
-# # is failing with a message that it does not exist or I don't have permissions to view it.
-# # I tried this with different PRs and full acess PAT and it still did not work.
-# pull_request_id=252800
-# project_id_or_name=ADO_PROJECT
+        Use this tool when you need to:
+        - Check if all required policies have passed for a PR
+        - See which build policies are blocking a merge
+        - Diagnose why a PR cannot be completed
 
-# git_client = get_git_client()
-# # making this into a tool could be useful; although, there is maybe a better method,
-# # which can include also work item refs within a single request
-# pr = git_client.get_pull_request_by_id(
-#     project=project_id_or_name,
-#     pull_request_id=pull_request_id
-# )
+        Args:
+            project: Azure DevOps project name
+            repository: Azure DevOps repository name
+            pull_request_id: ID of the Pull Request
 
-# # Get policy evaluations
-# policy_client = get_policy_client()
-# evaluations = policy_client.get_policy_evaluations(
-#     project=project_id_or_name,
-#     artifact_id=pr.artifact_id
-# )
+        Returns:
+            Formatted string containing policy names and their
+            current evaluation status
+        """
+        try:
+            git_client = get_git_client()
+            policy_client = get_policy_client()
+            return _get_pr_policy_evaluations_impl(
+                git_client=git_client,
+                policy_client=policy_client,
+                project=project,
+                repository=repository,
+                pull_request_id=pull_request_id,
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"
 
-# for evaluation in evaluations:
-#     print(f"Policy Evaluation ID: {evaluation.id}")
-#     print(f"Policy Type: {evaluation.policy_type}")
-#     print(f"Status: {evaluation.status}")
-#     print(f"Created Date: {evaluation.created_date}")
-#     print(f"Last Updated Date: {evaluation.last_updated_date}")
-#     print(f"Configuration: {evaluation.configuration}")
+    @mcp.tool()
+    def approve_with_suggestions_pull_request(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        Approve a Pull Request with suggestions in Azure DevOps.
+
+        Use this tool when you want to indicate approval but have
+        non-blocking suggestions for the author to consider.
+
+        Args:
+            project: Azure DevOps project name
+            repository: Azure DevOps repository name
+            pull_request_id: ID of the PR
+
+        Returns:
+            Formatted string confirming the vote was recorded
+        """
+        try:
+            git_client = get_git_client()
+            identity_client = get_identity_client()
+            return _approve_with_suggestions_pull_request_impl(
+                git_client=git_client,
+                identity_client=identity_client,
+                project_id_or_name=project,
+                repository_id=repository,
+                pull_request_id=pull_request_id,
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"
+
+    @mcp.tool()
+    def wait_for_author_pull_request(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        Set a Pull Request vote to 'Waiting for Author' in Azure DevOps.
+
+        Use this tool when the PR needs changes from the author before
+        it can be reviewed further or merged.
+
+        Args:
+            project: Azure DevOps project name
+            repository: Azure DevOps repository name
+            pull_request_id: ID of the PR
+
+        Returns:
+            Formatted string confirming the vote was recorded
+        """
+        try:
+            git_client = get_git_client()
+            identity_client = get_identity_client()
+            return _wait_for_author_pull_request_impl(
+                git_client=git_client,
+                identity_client=identity_client,
+                project_id_or_name=project,
+                repository_id=repository,
+                pull_request_id=pull_request_id,
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"
+
+    @mcp.tool()
+    def reset_pull_request_vote(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        Reset your vote on a Pull Request in Azure DevOps.
+
+        Use this tool when you want to clear a previously cast vote
+        (approval, rejection, or waiting for author).
+
+        Args:
+            project: Azure DevOps project name
+            repository: Azure DevOps repository name
+            pull_request_id: ID of the PR
+
+        Returns:
+            Formatted string confirming the vote was reset
+        """
+        try:
+            git_client = get_git_client()
+            identity_client = get_identity_client()
+            return _reset_pull_request_vote_impl(
+                git_client=git_client,
+                identity_client=identity_client,
+                project_id_or_name=project,
+                repository_id=repository,
+                pull_request_id=pull_request_id,
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"
+
+    @mcp.tool()
+    def restart_pr_merge(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        Restart the merge evaluation for a Pull Request in Azure DevOps.
+
+        Use this tool when you need to:
+        - Re-trigger a merge conflict check after resolving conflicts
+        - Re-queue a merge that was previously blocked or failed
+        - Force a fresh merge evaluation
+
+        Args:
+            project: Azure DevOps project name
+            repository: Azure DevOps repository name
+            pull_request_id: ID of the PR
+
+        Returns:
+            Formatted string confirming the merge was re-queued
+        """
+        try:
+            git_client = get_git_client()
+            return _restart_pr_merge_impl(
+                git_client=git_client,
+                project_id_or_name=project,
+                repository_id=repository,
+                pull_request_id=pull_request_id,
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"

@@ -62,6 +62,24 @@ def _format_pull_request(pull_request: GitPullRequest) -> str:
     if hasattr(pull_request, "description") and pull_request.description:
         formatted_info.append(f"Description: {pull_request.description}")
 
+    # Add commit SHAs so callers can pass them to download_file_content
+    if (
+        hasattr(pull_request, "last_merge_source_commit")
+        and pull_request.last_merge_source_commit
+    ):
+        formatted_info.append(
+            "Source Commit (after): "
+            f"{pull_request.last_merge_source_commit.commit_id}"
+        )
+    if (
+        hasattr(pull_request, "last_merge_target_commit")
+        and pull_request.last_merge_target_commit
+    ):
+        formatted_info.append(
+            "Target Commit (before): "
+            f"{pull_request.last_merge_target_commit.commit_id}"
+        )
+
     return "\n".join(formatted_info)
 
 
@@ -1015,6 +1033,40 @@ def _restart_pr_merge_impl(
         )
 
 
+def _get_pr_changed_files_impl(
+    git_client: GitClient,
+    project: str,
+    repository: str,
+    pull_request_id: int,
+) -> str:
+    iterations = git_client.get_pull_request_iterations(
+        repository_id=repository,
+        pull_request_id=pull_request_id,
+        project=project,
+    )
+    if not iterations:
+        return "No iterations found for this pull request."
+    latest = iterations[-1].id
+
+    changes = git_client.get_pull_request_iteration_changes(
+        repository_id=repository,
+        pull_request_id=pull_request_id,
+        iteration_id=latest,
+        project=project,
+    )
+    if not changes or not changes.change_entries:
+        return "No file changes found in this pull request."
+
+    lines = []
+    for entry in changes.change_entries:
+        item = entry.item
+        path = getattr(item, "path", "(unknown)") if item else "(unknown)"
+        change_type = getattr(entry, "change_type", "edit")
+        lines.append(f"{change_type}: {path}")
+
+    return "\n".join(lines)
+
+
 def register_tools(mcp: FastMCP) -> None:
     """
     Register pull request tools with the MCP server.
@@ -1656,3 +1708,40 @@ def register_tools(mcp: FastMCP) -> None:
             )
         except AzureDevOpsClientError as e:
             return f"Error: {str(e)}"
+
+    @mcp.tool()
+    def get_pr_changed_files(
+        project: str,
+        repository: str,
+        pull_request_id: int,
+    ) -> str:
+        """
+        List the files changed by a pull request.
+
+        Use this tool when you need to:
+        - Enumerate all files touched by a PR before reading their content
+          with download_file_content
+        - Understand the scope of a PR before reviewing it
+
+        IMPORTANT: To read the content of a listed file, call
+        download_file_content with the commit SHA shown in get_pull_request
+        output ("Source Commit (after)" for the proposed state, "Target
+        Commit (before)" for the base state).
+
+        Args:
+            project: Azure DevOps project name.
+            repository: Repository name.
+            pull_request_id: Numeric pull request ID.
+
+        Returns:
+            One line per changed file: "<change_type>: <path>".
+        """
+        try:
+            git_client = get_git_client()
+            return _get_pr_changed_files_impl(
+                git_client, project, repository, pull_request_id
+            )
+        except AzureDevOpsClientError as e:
+            return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error retrieving PR changed files: {str(e)}"

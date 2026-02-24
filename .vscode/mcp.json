@@ -1,0 +1,28 @@
+{
+  "servers": {
+    "azure-devops": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "${workspaceFolder}/mcp-azure-devops",
+        "run",
+        "mcp-azure-devops"
+      ],
+      "env": {
+        "AZURE_DEVOPS_ORGANIZATION_URL": "https://tfs.veeam.dev/DefaultCollection",
+        "AZURE_DEVOPS_PAT": "${input:ado_token}",
+        "HTTPS_PROXY": "socks5h://72.145.11.57:1080",
+        "HTTP_PROXY": "socks5h://72.145.11.57:1080",
+        "AZURE_DEVOPS_VERIFY_SSL": "true"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "ado_token",
+      "description": "Azure DevOps Personal Access Token",
+      "password": true
+    }
+  ]
+}

@@ -14,6 +14,36 @@ from azure.devops.v7_1.work_item_tracking_process import (
 from msrest.authentication import BasicAuthentication
 
 
+def _configure_ssl() -> None:
+    """
+    Disable SSL certificate verification if AZURE_DEVOPS_VERIFY_SSL=false.
+
+    When disabled, patches requests.Session so all outbound HTTPS connections
+    skip certificate validation. Also suppresses the resulting urllib3 warning.
+    Users who prefer to trust a specific cert instead can set REQUESTS_CA_BUNDLE
+    to the cert path — that requires no code changes.
+    """
+    if os.environ.get("AZURE_DEVOPS_VERIFY_SSL", "true").lower() != "false":
+        return
+
+    import requests
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    _original_init = requests.Session.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        self.verify = False
+
+    requests.Session.__init__ = _patched_init
+
+
+# Apply SSL configuration at import time
+_configure_ssl()
+
+
 def get_credentials() -> Tuple[Optional[str], Optional[str]]:
     """
     Get Azure DevOps credentials from environment variables.

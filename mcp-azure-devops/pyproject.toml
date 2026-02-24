@@ -15,6 +15,7 @@ license = {file = "LICENSE"}
 dependencies = [
     "azure-devops>=7.1.0b4",
     "mcp>=1.9.1",
+    "pysocks>=1.7.1",
 ]
 
 [project.scripts]

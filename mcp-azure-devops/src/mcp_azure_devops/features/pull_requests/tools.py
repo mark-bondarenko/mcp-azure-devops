@@ -1239,14 +1239,10 @@ def register_tools(mcp: FastMCP) -> None:
             description: PR description
             source_branch: Source branch name
             target_branch: Target branch name
-            required_reviewers: List of required reviewers
-                (optional, default None)
-            optional_reviewers: List of optional reviewers
-                (optional, default None)
-            is_draft: Whether the PR is a draft
-                (optional, default False)
-            work_item_ids: List of work item IDs to link
-                to the PR (optional, default None)
+            required_reviewers: List of required reviewers (optional, default None)
+            optional_reviewers: List of optional reviewers (optional, default None)
+            is_draft: Whether the PR is a draft (optional, default False)
+            work_item_ids: List of work item IDs to link to the PR (optional, default None)
         
         Returns:
             Formatted string containing pull request

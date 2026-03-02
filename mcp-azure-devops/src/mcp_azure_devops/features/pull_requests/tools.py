@@ -329,7 +329,8 @@ def _create_pull_request_impl(
     target_branch: str,
     required_reviewers: Optional[List[str]] = None,
     optional_reviewers: Optional[List[str]] = None,
-    is_draft: Optional[bool] = False
+    is_draft: Optional[bool] = False,
+    work_item_ids: Optional[List[int]] = None,
 ) -> str:
     """
     Implementation of pull request creation.
@@ -346,6 +347,7 @@ def _create_pull_request_impl(
         required_reviewers: List of required reviewer names or emails or GUIDs (optional)
         optional_reviewers: List of optional reviewer names or emails or GUIDs (optional)
         is_draft: Whether the PR is a draft (optional, default False)
+        work_item_ids: List of work item IDs to link to the PR (optional)
     
     Returns:
         Formatted string containing pull request information
@@ -361,14 +363,19 @@ def _create_pull_request_impl(
             for reviewer in required_reviewers:
                 guid = _resolve_reviewer_guid(identity_client, reviewer)
                 resolved_reviewers.append(IdentityRefWithVote(id=guid, is_required=True))
-        
+
+        work_item_refs = None
+        if work_item_ids:
+            work_item_refs = [ResourceRef(id=str(wid)) for wid in work_item_ids]
+
         pr = GitPullRequest(
             title=title,
             description=description,
             source_ref_name=f"refs/heads/{source_branch}",
             target_ref_name=f"refs/heads/{target_branch}",
             is_draft=is_draft,
-            reviewers=resolved_reviewers
+            reviewers=resolved_reviewers,
+            work_item_refs=work_item_refs,
         )
 
         result = git_client.create_pull_request(
@@ -1215,10 +1222,16 @@ def register_tools(mcp: FastMCP) -> None:
         required_reviewers: Optional[List[str]] = None,
         optional_reviewers: Optional[List[str]] = None,
         is_draft: Optional[bool] = False,
+        work_item_ids: Optional[List[int]] = None,
     ) -> str:
         """
         Create a new Pull Request in Azure DevOps.
-        
+
+        Use this tool when you need to:
+        - Create a new pull request for code review
+        - Link work items to a pull request at creation time
+        - Assign required and optional reviewers
+
         Args:
             project: Azure DevOps project name
             repository: Azure DevOps repository name
@@ -1229,9 +1242,11 @@ def register_tools(mcp: FastMCP) -> None:
             required_reviewers: List of required reviewers (optional, default None)
             optional_reviewers: List of optional reviewers (optional, default None)
             is_draft: Whether the PR is a draft (optional, default False)
+            work_item_ids: List of work item IDs to link to the PR (optional, default None)
         
         Returns:
-            Formatted string containing pull request information
+            Formatted string containing pull request
+            information including linked work items
         """
         try:
             git_client = get_git_client()
@@ -1247,7 +1262,9 @@ def register_tools(mcp: FastMCP) -> None:
                 target_branch=target_branch,
                 optional_reviewers=optional_reviewers,
                 required_reviewers=required_reviewers,
-                is_draft=is_draft)
+                is_draft=is_draft,
+                work_item_ids=work_item_ids,
+            )
         
         except AzureDevOpsClientError as e:
             return f"Error: {str(e)}"

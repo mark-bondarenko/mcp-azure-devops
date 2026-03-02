@@ -1,7 +1,10 @@
 from unittest.mock import MagicMock, patch
 
+from azure.devops.v7_1.git.models import ResourceRef
+
 from mcp_azure_devops.features.pull_requests.tools import (
     _format_pull_request,
+    _create_pull_request_impl,
     _get_pr_changed_files_impl,
     _get_pr_policy_evaluations_impl,
     _approve_with_suggestions_pull_request_impl,
@@ -350,3 +353,108 @@ def test_get_pr_changed_files_uses_latest_iteration():
 
     call_kwargs = mock_git.get_pull_request_iteration_changes.call_args[1]
     assert call_kwargs["iteration_id"] == 2
+
+
+# ── _create_pull_request_impl work item linking ──────────────────────────────
+
+
+def _make_create_pr_mocks():
+    """Return (git_client, identity_client) mocks for create PR."""
+    mock_git = MagicMock()
+    mock_identity = MagicMock()
+
+    created_pr = _make_pr(source_sha="aaa", target_sha="bbb")
+    mock_git.create_pull_request.return_value = created_pr
+
+    return mock_git, mock_identity
+
+
+def test_create_pr_with_work_item_ids():
+    """Work item IDs are converted to ResourceRef objects."""
+    mock_git, mock_identity = _make_create_pr_mocks()
+
+    _create_pull_request_impl(
+        git_client=mock_git,
+        identity_client=mock_identity,
+        project_id_or_name="proj",
+        repository_id="repo",
+        title="Test",
+        description="desc",
+        source_branch="feature",
+        target_branch="main",
+        work_item_ids=[101, 202],
+    )
+
+    call_kwargs = mock_git.create_pull_request.call_args[1]
+    pr_arg = call_kwargs["git_pull_request_to_create"]
+    refs = pr_arg.work_item_refs
+    assert refs is not None
+    assert len(refs) == 2
+    assert isinstance(refs[0], ResourceRef)
+    assert refs[0].id == "101"
+    assert refs[1].id == "202"
+
+
+def test_create_pr_without_work_item_ids():
+    """No work_item_refs when work_item_ids is None."""
+    mock_git, mock_identity = _make_create_pr_mocks()
+
+    _create_pull_request_impl(
+        git_client=mock_git,
+        identity_client=mock_identity,
+        project_id_or_name="proj",
+        repository_id="repo",
+        title="Test",
+        description="desc",
+        source_branch="feature",
+        target_branch="main",
+    )
+
+    call_kwargs = mock_git.create_pull_request.call_args[1]
+    pr_arg = call_kwargs["git_pull_request_to_create"]
+    assert pr_arg.work_item_refs is None
+
+
+def test_create_pr_with_empty_work_item_ids():
+    """Empty list behaves the same as None."""
+    mock_git, mock_identity = _make_create_pr_mocks()
+
+    _create_pull_request_impl(
+        git_client=mock_git,
+        identity_client=mock_identity,
+        project_id_or_name="proj",
+        repository_id="repo",
+        title="Test",
+        description="desc",
+        source_branch="feature",
+        target_branch="main",
+        work_item_ids=[],
+    )
+
+    call_kwargs = mock_git.create_pull_request.call_args[1]
+    pr_arg = call_kwargs["git_pull_request_to_create"]
+    assert pr_arg.work_item_refs is None
+
+
+def test_create_pr_api_error_returns_error_string():
+    """API errors in create PR return formatted error string."""
+    mock_git = MagicMock()
+    mock_identity = MagicMock()
+    mock_git.create_pull_request.side_effect = Exception(
+        "Branch not found"
+    )
+
+    result = _create_pull_request_impl(
+        git_client=mock_git,
+        identity_client=mock_identity,
+        project_id_or_name="proj",
+        repository_id="repo",
+        title="Test",
+        description="desc",
+        source_branch="nonexistent",
+        target_branch="main",
+        work_item_ids=[42],
+    )
+
+    assert "Error" in result
+    assert "Branch not found" in result

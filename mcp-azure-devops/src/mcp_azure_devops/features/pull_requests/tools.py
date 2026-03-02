@@ -344,14 +344,10 @@ def _create_pull_request_impl(
         description: PR description
         source_branch: Source branch name
         target_branch: Target branch name
-        required_reviewers: List of required reviewer names
-            or emails or GUIDs (optional)
-        optional_reviewers: List of optional reviewer names
-            or emails or GUIDs (optional)
-        is_draft: Whether the PR is a draft (optional,
-            default False)
-        work_item_ids: List of work item IDs to link to the
-            PR (optional)
+        required_reviewers: List of required reviewer names or emails or GUIDs (optional)
+        optional_reviewers: List of optional reviewer names or emails or GUIDs (optional)
+        is_draft: Whether the PR is a draft (optional, default False)
+        work_item_ids: List of work item IDs to link to the PR (optional)
     
     Returns:
         Formatted string containing pull request information
@@ -360,32 +356,17 @@ def _create_pull_request_impl(
         resolved_reviewers = []
         if optional_reviewers:
             for reviewer in optional_reviewers:
-                guid = _resolve_reviewer_guid(
-                    identity_client, reviewer
-                )
-                resolved_reviewers.append(
-                    IdentityRefWithVote(
-                        id=guid, is_required=False
-                    )
-                )
+                guid = _resolve_reviewer_guid(identity_client, reviewer)
+                resolved_reviewers.append(IdentityRefWithVote(id=guid, is_required=False))
 
         if required_reviewers:
             for reviewer in required_reviewers:
-                guid = _resolve_reviewer_guid(
-                    identity_client, reviewer
-                )
-                resolved_reviewers.append(
-                    IdentityRefWithVote(
-                        id=guid, is_required=True
-                    )
-                )
+                guid = _resolve_reviewer_guid(identity_client, reviewer)
+                resolved_reviewers.append(IdentityRefWithVote(id=guid, is_required=True))
 
         work_item_refs = None
         if work_item_ids:
-            work_item_refs = [
-                ResourceRef(id=str(wid))
-                for wid in work_item_ids
-            ]
+            work_item_refs = [ResourceRef(id=str(wid)) for wid in work_item_ids]
 
         pr = GitPullRequest(
             title=title,

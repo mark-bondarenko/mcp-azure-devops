@@ -1066,7 +1066,7 @@ def _get_pr_changed_files_impl(
 
     lines = []
     for entry in changes.change_entries:
-        item = entry.item
+        item = getattr(entry, "item", None)
         path = getattr(item, "path", "(unknown)") if item else "(unknown)"
         change_type = getattr(entry, "change_type", "edit")
         lines.append(f"{change_type}: {path}")

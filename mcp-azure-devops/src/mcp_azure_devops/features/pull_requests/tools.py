@@ -1066,9 +1066,24 @@ def _get_pr_changed_files_impl(
 
     lines = []
     for entry in changes.change_entries:
+        props = getattr(entry, "additional_properties", {}) or {}
+
+        # Resolve file path: try SDK attributes first, then
+        # additional_properties (on-prem TFS puts everything there)
         item = getattr(entry, "item", None)
-        path = getattr(item, "path", "(unknown)") if item else "(unknown)"
-        change_type = getattr(entry, "change_type", "edit")
+        path = getattr(item, "path", None) if item else None
+        if not path:
+            nested_item = props.get("item")
+            if isinstance(nested_item, dict):
+                path = nested_item.get("path")
+        if not path:
+            path = "(unknown)"
+
+        # Resolve change type the same way
+        change_type = getattr(entry, "change_type", None)
+        if not change_type:
+            change_type = props.get("changeType", "edit")
+
         lines.append(f"{change_type}: {path}")
 
     return "\n".join(lines)
